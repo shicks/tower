@@ -2,11 +2,11 @@
 
 -- Library for winning Spell Tower
 
-import Data.Array ( Array, array, bounds, indices, (!) )
+import Data.Array ( Array, array, bounds, indices, ixmap, (!), (//) )
 import Data.ByteString ( ByteString )
 import qualified Data.ByteString.Char8 as S
 import Data.Char ( isNumber, isLetter, ord, toUpper )
-import Data.List ( nub, sort, sortBy )
+import Data.List ( intercalate, nub, sort, sortBy )
 import Data.Ord ( comparing )
 import qualified Data.Trie as T
 import Data.Trie ( Trie )
@@ -21,6 +21,17 @@ dictionary = unsafePerformIO $ do
 data Letter = Letter Char Int | Block | Empty
             deriving (Show, Eq, Ord)
 type Tower = Array (Int, Int) Letter
+
+showTower :: Tower -> String
+showTower tower = unlines $ map showRow [height-1, height-2 .. 0]
+  where showRow row = intercalate " " $ map (showCell row) [0 .. width-1]
+        showCell row col = case tower ! (col, row) of
+          Letter c 3 -> c:" "
+          Letter c n -> c:show n
+          Block -> "--"
+          Empty -> "  "
+        width = (fst $ snd $ bounds tower) + 1
+        height = (snd $ snd $ bounds tower) + 1
 
 readTower :: String -> Either String Tower
 readTower = readTower' [] [] 
@@ -57,7 +68,8 @@ findWords :: Tower -> [String]
 findWords tower = sorted $ 
                   concatMap (findFrom [] S.empty 3 dictionary) $ 
                   indices tower
-  where findFrom :: [(Int, Int)] -> ByteString -> Int -> Trie () -> (Int, Int) -> [String]
+  where findFrom :: [(Int, Int)] -> ByteString -> Int -> Trie () -> (Int, Int) 
+                    -> [String]
         findFrom soFar word size dict ix@(c, r)
           | c < 0 || c >= width || r < 0 || r > height = []
           | otherwise = case tower ! ix of
@@ -90,12 +102,32 @@ findWords tower = sorted $
         word' n w (ix:rest) = case tower ! ix of
                                 Letter l n' -> word' (max n n') (l:w) rest
                                 _ -> error "impossible"
-        sorted = sortBy (comparing (((-1)*) . length)) . nub . sort
+        sorted = sortBy (comparing (negate . length)) . nub . sort
         width = (fst $ snd $ bounds tower) + 1
         height = (snd $ snd $ bounds tower) + 1
+
+-- Silently discards the top row
+addRow :: String -> Tower -> Tower
+addRow row tower = ixmap (bounds tower) (\(c, r) -> (c, (r-1) `mod` height)) $
+                   tower // parseRow 0 [] row
+  where height = (snd $ snd $ bounds tower) + 1
+        width = (fst $ snd $ bounds tower) + 1
+        parseRow i ls "" = ls
+        parseRow i ls ('.':rest) = parseRow (i+1) (((i, height-1), Block):ls) rest
+        parseRow i ls (c:d:rest) 
+          | isLetter c && isNumber d = let n = ord d - ord '0'
+                                       in parseRow (i+1) 
+                                          (((i, height-1), 
+                                            Letter (toUpper c) n):ls) rest
+          | isLetter c = parseRow i ls (c:'3':d:rest)
+        parseRow i ls (c:[]) = parseRow i ls (c:'3':[])
 
 main :: IO ()
 main = do
   -- First we need to read the tower
   tower <- (readTower `fmap` getContents) >>= either fail return
-  print $ findWords tower
+  putStrLn $ showTower tower
+  putStrLn ""
+  let tower2 = addRow "gj4wxv.u5s" tower
+  putStrLn $ showTower tower2
+  print $ findWords tower2
