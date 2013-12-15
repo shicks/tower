@@ -11,8 +11,6 @@ import Data.Ord ( comparing )
 import qualified Data.Trie as T
 import Data.Trie ( Trie )
 
--- import Debug.Trace ( trace )
-
 import System.IO.Unsafe ( unsafePerformIO )
 
 dictionary :: Trie ()
@@ -23,11 +21,6 @@ dictionary = unsafePerformIO $ do
 data Letter = Letter Char Int | Block | Empty
             deriving (Show, Eq, Ord)
 type Tower = Array (Int, Int) Letter
-
-trace a b = b
-
-tr :: Show a => String -> a -> a
-tr desc a = trace (desc ++ show a) a
 
 readTower :: String -> Either String Tower
 readTower = readTower' [] [] 
@@ -67,17 +60,14 @@ findWords tower = sorted $
   where findFrom :: [(Int, Int)] -> ByteString -> Int -> Trie () -> (Int, Int) -> [String]
         findFrom soFar word size dict ix@(c, r)
           | c < 0 || c >= width || r < 0 || r > height = []
-          | otherwise = trace ("findWords " ++ show soFar ++ " " ++ show word ++ 
-                               show size ++ " " ++ show (T.size dict) ++ 
-                               " " ++ show ix) $
-                        case tower ! ix of
+          | otherwise = case tower ! ix of
                           Empty -> []
                           Block -> []
                           Letter l minSize ->
                             let word' = S.snoc word l
                                 dict' = T.submap word' dict
                                 rest = if T.null dict'
-                                       then trace ("  empty: " ++ show word') []
+                                       then []
                                        else do 
                                          n <- neighbors ix
                                          case n `elem` (ix:soFar) of
@@ -86,9 +76,9 @@ findWords tower = sorted $
                                                     (max size minSize) dict' n
                             in case T.lookup word dict of
                               Just () 
-                                | S.length word >= size -> trace ("  found " ++ show word) $ S.unpack word:rest
-                                | otherwise -> trace ("  too short: " ++ show word ++ show size) rest
-                              _ -> trace ("  not a word: " ++ show word) rest
+                                | S.length word >= size -> S.unpack word:rest
+                                | otherwise -> rest
+                              _ -> rest
         neighbors (c, r) = do c' <- [c-1, c, c+1]
                               r' <- [r-1, r, r+1]
                               return (c', r')
