@@ -14,8 +14,6 @@ import Data.Ord ( comparing )
 import qualified Data.Trie as T
 import Data.Trie ( Trie )
 
-import Debug.Trace (trace)
-
 import System.IO.Unsafe ( unsafePerformIO )
 
 dictionary :: Trie ()
@@ -77,27 +75,24 @@ findWords tower = sorted $
                     -> [(String, Tower)]
         findFrom soFar word size dict ix@(c, r)
           | c < 0 || c >= width || r < 0 || r > height = []
-          | otherwise = trace ("findFrom " ++ show (reverse soFar) ++ " " ++ show word ++ " " ++ show size ++ " dict(" ++ show (T.size dict) ++ ") " ++ show ix) $
-            case tower ! ix of
+          | otherwise = case tower ! ix of
               Empty -> []
               Block -> []
               Letter l minSize ->
                 let word' = S.snoc word l
                     dict' = T.submap word' dict
                     legal = T.lookup word' dict' == Just () &&
-                            -- NOTE: minsize here, too? probably should do diff
-                            S.length word' >= size
+                            S.length word' >= max size minSize
                     add = case legal of
-                      True -> trace ("  adding " ++ show (reverse (ix:soFar)) ++ " " ++ show word') $
-                              (option (reverse (ix:soFar)) word':)
+                      True -> (option (reverse (ix:soFar)) word':)
                       False -> id
                 in if T.null dict'
                    then []
-                   else do 
+                   else add $ do 
                      n <- neighbors ix
                      case n `elem` (ix:soFar) of
                        True -> []
-                       False -> add $ findFrom (ix:soFar) word' 
+                       False -> findFrom (ix:soFar) word' 
                                 (max size minSize) dict' n
         neighbors (c, r) = do c' <- [c-1, c, c+1]
                               r' <- [r-1, r, r+1]
