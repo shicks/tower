@@ -2,14 +2,19 @@
 
 -- Library for winning Spell Tower
 
-import Data.Array ( Array, array, bounds, indices, ixmap, (!), (//) )
+import Data.Array ( Array, 
+                    array, bounds, elems, indices, ixmap, listArray, 
+                    (!), (//) )
 import Data.ByteString ( ByteString )
 import qualified Data.ByteString.Char8 as S
 import Data.Char ( isNumber, isLetter, ord, toUpper )
-import Data.List ( intercalate, nub, sort, sortBy )
+import Data.Function ( on )
+import Data.List ( groupBy, intercalate, nub, nubBy, sort, sortBy )
 import Data.Ord ( comparing )
 import qualified Data.Trie as T
 import Data.Trie ( Trie )
+
+import Debug.Trace (trace)
 
 import System.IO.Unsafe ( unsafePerformIO )
 
@@ -64,36 +69,41 @@ readTower = readTower' [] []
         width = 8
         height = 12
 
-findWords :: Tower -> [String]
+findWords :: Tower -> [(String, Tower)]
 findWords tower = sorted $ 
                   concatMap (findFrom [] S.empty 3 dictionary) $ 
                   indices tower
   where findFrom :: [(Int, Int)] -> ByteString -> Int -> Trie () -> (Int, Int) 
-                    -> [String]
+                    -> [(String, Tower)]
         findFrom soFar word size dict ix@(c, r)
           | c < 0 || c >= width || r < 0 || r > height = []
-          | otherwise = case tower ! ix of
-                          Empty -> []
-                          Block -> []
-                          Letter l minSize ->
-                            let word' = S.snoc word l
-                                dict' = T.submap word' dict
-                                rest = if T.null dict'
-                                       then []
-                                       else do 
-                                         n <- neighbors ix
-                                         case n `elem` (ix:soFar) of
-                                           True -> []
-                                           False -> findFrom (ix:soFar) word' 
-                                                    (max size minSize) dict' n
-                            in case T.lookup word dict of
-                              Just () 
-                                | S.length word >= size -> S.unpack word:rest
-                                | otherwise -> rest
-                              _ -> rest
+          | otherwise = trace ("findFrom " ++ show (reverse soFar) ++ " " ++ show word ++ " " ++ show size ++ " dict(" ++ show (T.size dict) ++ ") " ++ show ix) $
+            case tower ! ix of
+              Empty -> []
+              Block -> []
+              Letter l minSize ->
+                let word' = S.snoc word l
+                    dict' = T.submap word' dict
+                    legal = T.lookup word' dict' == Just () &&
+                            -- NOTE: minsize here, too? probably should do diff
+                            S.length word' >= size
+                    add = case legal of
+                      True -> trace ("  adding " ++ show (reverse (ix:soFar)) ++ " " ++ show word') $
+                              (option (reverse (ix:soFar)) word':)
+                      False -> id
+                in if T.null dict'
+                   then []
+                   else do 
+                     n <- neighbors ix
+                     case n `elem` (ix:soFar) of
+                       True -> []
+                       False -> add $ findFrom (ix:soFar) word' 
+                                (max size minSize) dict' n
         neighbors (c, r) = do c' <- [c-1, c, c+1]
                               r' <- [r-1, r, r+1]
                               return (c', r')
+        immediate (c, r) = [(c-1, r), (c+1, r), (c, r), (c, r-1), (c, r+1)]
+        fullRow (_, r) = map (,r) [0 .. width-1]
         word :: [(Int, Int)] -> ([String] -> [String])
         word ixs = case word' 0 "" ixs of
                      (n, w) | length w >= n -> (w:)
@@ -102,9 +112,21 @@ findWords tower = sorted $
         word' n w (ix:rest) = case tower ! ix of
                                 Letter l n' -> word' (max n n') (l:w) rest
                                 _ -> error "impossible"
-        sorted = sortBy (comparing (negate . length)) . nub . sort
+        sorted = sortBy (comparing (negate . length . fst)) . 
+                 -- nubBy ((==) `on` fst) . 
+                 sortBy (comparing fst)
         width = (fst $ snd $ bounds tower) + 1
         height = (snd $ snd $ bounds tower) + 1
+        option :: [(Int, Int)] -> ByteString -> (String, Tower)
+        option ixs word = (S.unpack word, remove removed tower)
+          where removed = nub $ sort $ check ixs $ S.unpack word
+                check [] _ = []
+                check (i:is) (c:cs) 
+                  | c `elem` "JXZQ" = fullRow i ++ check' i is cs
+                  | otherwise = check' i is cs
+                check' i is cs 
+                  | S.length word > 4 = immediate i ++ check is cs
+                  | otherwise = i:check is cs
 
 -- Silently discards the top row
 addRow :: String -> Tower -> Tower
@@ -114,7 +136,7 @@ addRow row tower = ixmap (bounds tower) (\(c, r) -> (c, (r-1) `mod` height)) $
         width = (fst $ snd $ bounds tower) + 1
         parseRow i ls "" = ls
         parseRow i ls ('.':rest) = parseRow (i+1) (((i, height-1), Block):ls) rest
-        parseRow i ls (c:d:rest) 
+        parseRow i ls (c:d:rest)
           | isLetter c && isNumber d = let n = ord d - ord '0'
                                        in parseRow (i+1) 
                                           (((i, height-1), 
@@ -122,12 +144,33 @@ addRow row tower = ixmap (bounds tower) (\(c, r) -> (c, (r-1) `mod` height)) $
           | isLetter c = parseRow i ls (c:'3':d:rest)
         parseRow i ls (c:[]) = parseRow i ls (c:'3':[])
 
+remove :: [(Int, Int)] -> Tower -> Tower
+remove toRemove tower = listArray (bounds tower) $ concatMap remove' $ 
+                        groupBy ((==) `on` (fst . fst)) $
+                        zip (indices tower) (elems tower)
+  where remove' = pad . map snd . filter (not . (`elem` toRemove) . fst)
+        pad col 
+          | length col < height = col ++ replicate (height - length col) Empty
+          | length col > height = error "added something?"
+          | otherwise = col
+        height = (snd $ snd $ bounds tower) + 1
+
+heights :: Tower -> [Int]
+heights tower = map length $
+                groupBy ((==) `on` (fst . fst)) $
+                filter ((/=Empty) . snd) $
+                zip (indices tower) (elems tower)
+
+repl :: Tower -> IO ()
+repl tower = return ()
+
 main :: IO ()
 main = do
   -- First we need to read the tower
   tower <- (readTower `fmap` getContents) >>= either fail return
   putStrLn $ showTower tower
-  putStrLn ""
-  let tower2 = addRow "gj4wxv.u5s" tower
-  putStrLn $ showTower tower2
-  print $ findWords tower2
+  print $ map (\(a,b) -> (a,concatMap show $ heights b)) $ findWords tower
+  -- putStrLn ""
+  -- let tower2 = addRow "gj4wxv.u5s" tower
+  -- putStrLn $ showTower tower2
+  -- print $ elems tower2
