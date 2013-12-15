@@ -2,6 +2,8 @@
 
 -- Library for winning Spell Tower
 
+import Control.Monad ( forM_ )
+
 import Data.Array ( Array, 
                     array, bounds, elems, indices, ixmap, listArray, 
                     (!), (//) )
@@ -164,7 +166,16 @@ main = do
   -- First we need to read the tower
   tower <- (readTower `fmap` getContents) >>= either fail return
   putStrLn $ showTower tower
-  print $ map (\(a,b) -> (a,concatMap show $ heights b)) $ findWords tower
+  let results = findWords tower
+  forM_ results $ \(word, tower') -> do
+    putStrLn $ show word ++ " " ++ concatMap show (heights tower')
+    forM_ (findWords tower') $ \(word', tower'') ->
+      if not $ word' `elem` map fst results
+      then putStrLn $ show word ++ " " ++ show word' ++ " " ++ 
+                      concatMap show (heights tower'')
+      else return ()
+
+  -- print $ map (\(a,b) -> (a,concatMap show $ heights b)) $ findWords tower
   -- putStrLn ""
   -- let tower2 = addRow "gj4wxv.u5s" tower
   -- putStrLn $ showTower tower2
