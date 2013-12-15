@@ -16,6 +16,7 @@ import Data.Ord ( comparing )
 import qualified Data.Trie as T
 import Data.Trie ( Trie )
 
+import System.IO ( hFlush, stdout )
 import System.IO.Unsafe ( unsafePerformIO )
 
 dictionary :: Trie ()
@@ -28,13 +29,30 @@ data Letter = Letter Char Int | Block | Empty
 type Tower = Array (Int, Int) Letter
 
 showTower :: Tower -> String
-showTower tower = unlines $ map showRow [height-1, height-2 .. 0]
+showTower = showTower' []
+
+showTower' :: [(Int, Int)] -> Tower -> String
+showTower' highlighted tower = unlines $ map showRow [height-1, height-2 .. 0]
   where showRow row = intercalate " " $ map (showCell row) [0 .. width-1]
-        showCell row col = case tower ! (col, row) of
-          Letter c 3 -> c:" "
-          Letter c n -> c:show n
-          Block -> "--"
-          Empty -> "  "
+        showCell row col 
+          | (col, row) `elem` highlighted = "**"
+          | otherwise = case tower ! (col, row) of
+              Letter c 3 -> c:" "
+              Letter c n -> c:show n
+              Block -> "--"
+              Empty -> "  "
+        width = (fst $ snd $ bounds tower) + 1
+        height = (snd $ snd $ bounds tower) + 1
+
+serializeTower :: Tower -> String
+serializeTower tower = intercalate "|" $ map showCol [0 .. width-1]
+  where showCol col = concatMap (showCell col) [0 .. height-1]
+        showCell col row 
+          | otherwise = case tower ! (col, row) of
+              Letter c 3 -> c:""
+              Letter c n -> c:show n
+              Block -> "."
+              Empty -> ""
         width = (fst $ snd $ bounds tower) + 1
         height = (snd $ snd $ bounds tower) + 1
 
@@ -42,8 +60,12 @@ readTower :: String -> Either String Tower
 readTower = readTower' [] [] 
   where readTower' :: [[Letter]] -> [Letter] -> String -> Either String Tower
         readTower' cols col ('.':rest) = readTower' cols (Block:col) rest
-        readTower' cols col ('|':rest) = readTower' (finishCol col:cols) [] rest
-        readTower' cols col ('\n':rest) = readTower' (finishCol col:cols) [] rest
+        readTower' cols col ('|':rest) = readTower' 
+                                         (finishCol (reverse col):cols) [] rest
+        readTower' cols col (' ':rest) = readTower' 
+                                         (finishCol (reverse col):cols) [] rest
+        readTower' cols col ('\n':rest) = readTower' 
+                                          (finishCol (reverse col):cols) [] rest
         readTower' cols col (c:n:rest)
           | isLetter c && isNumber n = readTower' cols 
                                        (Letter (toUpper c) (ord n - ord '0'):col) 
@@ -51,13 +73,13 @@ readTower = readTower' [] []
           | isLetter c = readTower' cols col (c:'3':n:rest)
           | otherwise = Left $ "Invalid character: " ++ (c:n:rest)
         readTower' cols col (c:[]) = readTower' cols col (c:'3':[])
-        readTower' cols col "" = buildTower $ finishCol col:cols
+        readTower' cols col "" = buildTower $ finishCol (reverse col):cols
         finishCol :: [Letter] -> [Letter]
         finishCol col | length col < height = finishCol $ Empty:col
                       | length col > height = finishCol $ tail col
                       | otherwise = reverse col
         buildTower :: [[Letter]] -> Either String Tower
-        buildTower cols | length cols < width = buildTower $ []:cols
+        buildTower cols | length cols < width = buildTower $ finishCol []:cols
                         | length cols > width = buildTower $ tail cols 
                         | otherwise = buildTower' $ reverse cols
         buildTower' cols = Right $
@@ -69,14 +91,14 @@ readTower = readTower' [] []
         width = 8
         height = 12
 
-findWords :: Tower -> [(String, Tower)]
+findWords :: Tower -> [(String, [(Int, Int)], Tower)]
 findWords tower = sorted $ 
                   concatMap (findFrom [] S.empty 3 dictionary) $ 
                   indices tower
   where findFrom :: [(Int, Int)] -> ByteString -> Int -> Trie () -> (Int, Int) 
-                    -> [(String, Tower)]
-        findFrom soFar word size dict ix@(c, r)
-          | c < 0 || c >= width || r < 0 || r > height = []
+                    -> [(String, [(Int, Int)], Tower)]
+        findFrom soFar word size dict ix
+          | invalid ix = []
           | otherwise = case tower ! ix of
               Empty -> []
               Block -> []
@@ -109,21 +131,21 @@ findWords tower = sorted $
         word' n w (ix:rest) = case tower ! ix of
                                 Letter l n' -> word' (max n n') (l:w) rest
                                 _ -> error "impossible"
-        sorted = sortBy (comparing (negate . length . fst)) . 
+        sorted = sortBy (comparing (negate . length . (\(x,_,_)->x))) . 
                  -- nubBy ((==) `on` fst) . 
-                 sortBy (comparing fst)
+                 sortBy (comparing (\(x,_,_)->x))
         width = (fst $ snd $ bounds tower) + 1
         height = (snd $ snd $ bounds tower) + 1
-        option :: [(Int, Int)] -> ByteString -> (String, Tower)
-        option ixs word = (S.unpack word, remove removed tower)
+        invalid (c, r) = c < 0 || c >= width || r < 0 || r > height
+        option :: [(Int, Int)] -> ByteString -> (String, [(Int, Int)], Tower)
+        option ixs word = (S.unpack word, ixs, remove removed tower)
           where removed = nub $ sort $ check ixs $ S.unpack word
                 check [] _ = []
                 check (i:is) (c:cs) 
                   | c `elem` "JXZQ" = fullRow i ++ check' i is cs
                   | otherwise = check' i is cs
-                check' i is cs 
-                  | S.length word > 4 = immediate i ++ check is cs
-                  | otherwise = i:check is cs
+                check' i is cs = filter killed (immediate i) ++ check is cs
+                killed i = invalid i || tower ! i == Block || S.length word > 4
 
 -- Silently discards the top row
 addRow :: String -> Tower -> Tower
@@ -158,22 +180,73 @@ heights tower = map length $
                 filter ((/=Empty) . snd) $
                 zip (indices tower) (elems tower)
 
-repl :: Tower -> IO ()
-repl tower = return ()
-
-main :: IO ()
-main = do
-  -- First we need to read the tower
-  tower <- (readTower `fmap` getContents) >>= either fail return
-  putStrLn $ showTower tower
-  let results = findWords tower
-  forM_ results $ \(word, tower') -> do
+printOptions :: [(String, [(Int, Int)], Tower)] -> IO ()
+printOptions results = do
+  forM_ results $ \(word, _, tower') -> do
     putStrLn $ show word ++ " " ++ concatMap show (heights tower')
-    forM_ (findWords tower') $ \(word', tower'') ->
-      if not $ word' `elem` map fst results
+    forM_ (findWords tower') $ \(word', _, tower'') ->
+      if not $ word' `elem` map (\(x,_,_) -> x) results
       then putStrLn $ show word ++ " " ++ show word' ++ " " ++ 
                       concatMap show (heights tower'')
       else return ()
+
+showHelp :: IO ()
+showHelp = putStrLn $ unlines [
+  "Commands:",
+  "  p          Print the tower.",
+  "  s          Print all results.",
+  "  2          Print all results two levels deep.",
+  "  a <line>   Adds a line to the bottom.",
+  "  r <tower>  Redefines the tower.",
+  "  w <word>   Removes the word.",
+  "  q          Quits."]
+
+repl :: Tower -> IO ()
+repl tower = do
+  let results = findWords tower
+  putStr "> "
+  hFlush stdout
+  line <- getLine
+  case line of
+    ('q':_) -> putStrLn $ serializeTower tower
+    ('?':_) -> showHelp >> repl tower
+    ('p':_) -> putStrLn (showTower tower) >> repl tower
+    ('s':_) -> do forM_ results $ \(w,_,t) -> putStrLn $ show w ++ " " ++ 
+                                              concatMap show (heights t)
+                  repl tower
+    ('2':_) -> printOptions results >> repl tower
+    ('a':' ':row) -> repl $ addRow row tower
+    ('r':' ':spec) -> case readTower spec of
+      Left err -> putStrLn ("Error: " ++ err) >> repl tower
+      Right tower' -> repl tower'
+    ('w':' ':word) ->
+      case filter (\(x,_,_) -> x == map toUpper word) results of
+        [] -> putStrLn "Not a valid word." >> repl tower
+        [(_, ixs, tower')] -> do putStrLn $ showTower' ixs tower
+                                 repl tower'
+        ts -> do
+          which <- let get :: IO Int
+                       get = do
+                         forM_ (zip [1..] $ map (\(_,ixs,_)->ixs) ts) $ 
+                           \(i, ixs) -> do
+                             putStrLn $ show i ++ "."
+                             putStrLn $ showTower' ixs tower
+                         putStr "disambiguate> "
+                         hFlush stdout
+                         answer <- getLine
+                         case answer of
+                           ('q':_) -> return 0
+                           _ -> case reads answer of
+                             [(d, "")] -> return d
+                             _ -> get
+                   in get
+          if which == 0 
+            then repl tower
+            else repl $ (\(_,_,t)->t) $ ts !! (which - 1)
+    _ -> putStrLn "Unknown command" >> repl tower
+
+main :: IO ()
+main = repl $ (\(Right x)->x) $ readTower ""
 
   -- print $ map (\(a,b) -> (a,concatMap show $ heights b)) $ findWords tower
   -- putStrLn ""
