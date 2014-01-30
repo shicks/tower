@@ -9,7 +9,7 @@ import Data.Array ( Array,
                     (!), (//) )
 import Data.ByteString ( ByteString )
 import qualified Data.ByteString.Char8 as S
-import Data.Char ( isNumber, isLetter, ord, toUpper )
+import Data.Char ( chr, isNumber, isLetter, ord, toUpper )
 import Data.Function ( on )
 import Data.List ( groupBy, intercalate, nub, nubBy, sort, sortBy )
 import Data.Ord ( comparing )
@@ -46,7 +46,7 @@ showTower' highlighted tower = unlines $ map showRow [height-1, height-2 .. 0]
 
 serializeTower :: Tower -> String
 serializeTower tower = intercalate "|" $ map showCol [0 .. width-1]
-  where showCol col = concatMap (showCell col) [0 .. height-1]
+  where showCol col = concatMap (showCell col) [height-1, height-2 .. 0]
         showCell col row 
           | otherwise = case tower ! (col, row) of
               Letter c 3 -> c:""
@@ -175,26 +175,56 @@ remove toRemove tower = listArray (bounds tower) $ concatMap remove' $
         height = (snd $ snd $ bounds tower) + 1
 
 heights :: Tower -> [Int]
-heights tower = map length $
-                groupBy ((==) `on` (fst . fst)) $
-                filter ((/=Empty) . snd) $
-                zip (indices tower) (elems tower)
+heights tower = map height [0 .. width-1]
+  where height col = length $ filter inCol $ zip (indices tower) (elems tower)
+          where inCol (_, Empty) = False
+                inCol ((c, _), _) = c == col
+        width = (fst $ snd $ bounds tower) + 1
+
+showHeights :: Tower -> String
+showHeights = concatMap showHeight . heights
+  where showHeight n | n < 10 = show n
+                     | otherwise = (chr $ ord 'A' + n - 10) : ""
 
 printOptions :: [(String, [(Int, Int)], Tower)] -> IO ()
 printOptions results = do
   forM_ results $ \(word, _, tower') -> do
-    putStrLn $ show word ++ " " ++ concatMap show (heights tower')
+    putStrLn $ show word ++ " " ++ showHeights tower'
     forM_ (findWords tower') $ \(word', _, tower'') ->
       if not $ word' `elem` map (\(x,_,_) -> x) results
-      then putStrLn $ show word ++ " " ++ show word' ++ " " ++ 
-                      concatMap show (heights tower'')
+      then putStrLn $ show word ++ " " ++ show word' ++ " " ++ showHeights tower''
       else return ()
+
+printScores :: Int -> [(String, [(Int, Int)], Tower)] -> IO ()
+printScores count results = let options1 = map (scoreResult []) results
+                                options2 = concatMap scoreNextResult results
+                            in putStrLn $ unlines $ map snd $ 
+                               take count $ nub $ sort $ options1 ++ options2
+  where scoreResult :: [String] -> (String, a, Tower) -> (Int, String)
+        scoreResult ws (w, _, t) = (negate $ score (w:ws) $ heights t, 
+                                    unwords $ reverse $ showHeights t:w:ws)
+        scoreNextResult :: (String, a, Tower) -> [(Int, String)]
+        scoreNextResult (w, _, t) = map (scoreResult [w]) $ filter isNew $ 
+                                    findWords t
+        isNew :: (String, a, b) -> Bool
+        isNew (w', _, _) = not $ any (\(w, _, _) -> w' == w) $ results
+
+score :: [String] -> [Int] -> Int
+score words heights = lengths - importance * variance - over9penalty
+  where lengths = average (map length words) + maximum (map length words)
+        minHeight = minimum heights
+        variance = average $ map abs $ diff $ minHeight : heights ++ [minHeight]
+        diff a = map (uncurry (-)) $ zip a $ tail a
+        average a = sum a `div` length a
+        over9penalty = 2 * (min 0 $ maximum heights - 9)
+        importance = min 1 $ maximum heights - 7
 
 showHelp :: IO ()
 showHelp = putStrLn $ unlines [
   "Commands:",
   "  p          Print the tower.",
-  "  s          Print all results.",
+  "  s          Print top 40 results.",
+  "  1          Print all results.",
   "  2          Print all results two levels deep.",
   "  a <line>   Adds a line to the bottom.",
   "  r <tower>  Redefines the tower.",
@@ -211,8 +241,9 @@ repl tower = do
     ('q':_) -> putStrLn $ serializeTower tower
     ('?':_) -> showHelp >> repl tower
     ('p':_) -> putStrLn (showTower tower) >> repl tower
-    ('s':_) -> do forM_ results $ \(w,_,t) -> putStrLn $ show w ++ " " ++ 
-                                              concatMap show (heights t)
+    ('s':_) -> printScores 40 results >> repl tower
+    ('1':_) -> do forM_ results $ \(w,_,t) -> putStrLn $ show w ++ " " ++ 
+                                              showHeights t
                   repl tower
     ('2':_) -> printOptions results >> repl tower
     ('a':' ':row) -> repl $ addRow row tower
